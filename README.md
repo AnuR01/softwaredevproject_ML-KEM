@@ -1,2 +1,3 @@
-# softwaredevproject_ML-KEM
+# Software Development, Maintenance & Operations Project: ML-KEM Legacy Modernization with LLM Assistance
 Course project for Software Development, Maintenance &amp; Operations (University of Oulu): a simulated legacy device, an edge gateway, and a cloud service, migrated to post-quantum key establishment (ML-KEM-768) on the gateway ↔ cloud hop.
+In this group project, you will modernize a small legacy edge–cloud software system for the transition to post-quantum cryptography (PQC). The project combines software development, maintenance, and operations with the critical evaluation of code and design decisions produced by a large language model (LLM). 
