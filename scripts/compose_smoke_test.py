@@ -18,7 +18,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLOUD_URL = os.environ.get("SMOKE_CLOUD_URL", "http://127.0.0.1:8000")
 DEVICE_ID = f"compose-smoke-{int(time.time())}"
@@ -70,7 +69,8 @@ def main() -> int:
             query = urllib.parse.quote(DEVICE_ID)
             while time.monotonic() < deadline:
                 readings = get_json(f"/api/v1/telemetry?device_id={query}&limit=20")
-                if any(item.get("channel") == "mlkem" for item in readings.get("readings", [])):
+                items = readings.get("readings", [])
+                if any(item.get("channel") == "mlkem" for item in items):
                     print(f"PASS: {DEVICE_ID} reached the cloud over ML-KEM")
                     return 0
                 time.sleep(1)
@@ -83,7 +83,8 @@ def main() -> int:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-    except (OSError, subprocess.CalledProcessError, urllib.error.URLError, RuntimeError) as exc:
+    except (OSError, subprocess.CalledProcessError, urllib.error.URLError,
+            RuntimeError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 

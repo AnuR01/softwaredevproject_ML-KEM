@@ -52,7 +52,40 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
-      # The security-marked tests are also part of the run above. Listing them
-      # separately makes the evidence for the report easy to find in the log.
+      # The security- and failure-marked tests are also part of the run above.
+      # Listing them separately makes the evidence for the report easy to find
+      # in the log.
       - name: Security findings (weaknesses the baseline demonstrates)
         run: python -m pytest -m security -v
+
+      - name: Failure tests (cloud down, timeouts, bad replies, limits)
+        run: python -m pytest -m failure -v
+
+  # Static analysis runs once, not per Python version: the findings do not
+  # depend on the interpreter. Triage of every finding is in
+  # docs/quality-checks.md.
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install analysis tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pip-audit
+
+      # Lint plus the flake8-bandit security rules (ruff's port of bandit),
+      # configured in pyproject.toml. Fails the build on any new finding.
+      - name: Lint and security patterns (ruff)
+        run: ruff check . --output-format github
+
+      # Checks every pinned and transitive dependency against the Python
+      # Packaging Advisory Database and OSV. Fails on a known vulnerability.
+      - name: Dependency vulnerabilities (pip-audit)
+        run: pip-audit -r requirements.txt

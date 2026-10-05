@@ -45,7 +45,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from legacy_device.protocol import (
@@ -142,7 +142,7 @@ def measure_mlkem() -> dict:
 
     cloud_pk, cloud_sk = channel.generate_keypair()
     static_ss, static_ct = channel.encapsulate(cloud_pk)
-    eph_pk, eph_sk = channel.generate_keypair()
+    eph_pk, _eph_sk = channel.generate_keypair()
     eph_ss, eph_ct = channel.encapsulate(eph_pk)
     proof = channel.gateway_proof("token", static_ct, eph_pk)
     aead_key, confirm_key = channel.derive_session_keys(
@@ -378,8 +378,9 @@ def print_report(results: dict) -> None:
     row("legacy handshake", f"{keys['legacy']['handshake_bytes']} B, "
                             f"{keys['legacy']['handshake_round_trips']} round trips")
     row("legacy key rotation", keys["legacy"]["key_rotation_supported"])
-    row("ML-KEM-768 handshake", f"{keys['mlkem768_projected']['handshake_bytes']} B, "
-                                f"{keys['mlkem768_projected']['handshake_round_trips']} round trip")
+    projected = keys["mlkem768_projected"]
+    row("ML-KEM-768 handshake", f"{projected['handshake_bytes']} B, "
+                                f"{projected['handshake_round_trips']} round trip")
     row("ML-KEM fits device buffer",
         keys["mlkem768_projected"]["fits_device_buffer"])
 
@@ -447,7 +448,7 @@ def main() -> int:
 
     results = {
         "label": args.label,
-        "measured_at": datetime.now(timezone.utc).isoformat(),
+        "measured_at": datetime.now(UTC).isoformat(),
         "python": sys.version.split()[0],
         "platform": sys.platform,
         "frame_sizes": measure_frame_sizes(),
@@ -480,7 +481,7 @@ def main() -> int:
     print_report(results)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     out = OUTPUT_DIR / f"{args.label}-{stamp}.json"
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"\nwritten to {out}")

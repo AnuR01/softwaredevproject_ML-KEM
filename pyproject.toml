@@ -1,0 +1,28 @@
+# Static analysis configuration. CI runs `ruff check .`; see
+# docs/quality-checks.md for how each finding was triaged.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle: style errors and warnings
+    "F",        # pyflakes: unused names, undefined names
+    "I",        # import order
+    "B",        # flake8-bugbear: likely bugs
+    "S",        # flake8-bandit: security patterns (same checks as bandit)
+    "UP",       # pyupgrade: outdated syntax for Python 3.11
+    "SIM",      # flake8-simplify
+    "RUF",      # ruff's own checks
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: assert is how pytest works (S101), and tests deliberately use fixed
+# fake tokens (S105-S107). Neither is shipped code.
+"tests/*" = ["S101", "S105", "S106", "S107"]
+# Smoke test: runs a fixed `docker compose` argument list without a shell
+# (S603/S607), and only talks to the configured local cloud URL (S310).
+"scripts/compose_smoke_test.py" = ["S310", "S603", "S607"]
+# Measurement tool: only opens the cloud URL given on its own command line.
+"tools/baseline.py" = ["S310"]

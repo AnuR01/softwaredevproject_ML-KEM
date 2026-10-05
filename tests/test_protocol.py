@@ -24,7 +24,6 @@ from legacy_device.protocol import (
     parse_reading,
 )
 
-
 # --------------------------------------------------------------------------
 # Record formatting and parsing
 # --------------------------------------------------------------------------
@@ -237,6 +236,6 @@ def test_finding_ciphertext_tampering_is_caught_only_by_accident():
     # But the error is a decode failure, not an authentication failure: the
     # exception carries no proof of origin, and the IV attack above bypasses
     # it entirely.
-    assert LEGACY_PSK == bytes.fromhex("000102030405060708090a0b0c0d0e0f"), (
+    assert bytes.fromhex("000102030405060708090a0b0c0d0e0f") == LEGACY_PSK, (
         "the fleet-wide hardcoded key is part of this finding"
     )

@@ -7,7 +7,7 @@ without binding a port.
 
 Storage is module-level state, so every test starts from an empty buffer via
 the autouse fixture below. Without it, tests would pass or fail depending on
-the order pytest happened to run them in. 
+the order pytest happened to run them in.
 """
 
 import pytest
