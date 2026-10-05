@@ -13,7 +13,8 @@ evaluation of code and design decisions produced by a large language model
 
 The baseline was built intentionally imperfect; its weaknesses are listed
 below with their current status. The full migration and fallback reasoning
-will be written up in `docs/architecture.md` (not yet written).
+is in [`docs/architecture.md`](docs/architecture.md): migration
+plan, rollback decisions, cryptographic inventory and risk register.
 
 ## Architecture
 
@@ -376,8 +377,9 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] Static analysis, dependency scanning and failure tests in CI
 - [x] ML-KEM-768 integration on the gateway-cloud path, with measurements
 - [x] Container images and local Docker Compose deployment
+- [x] Automated image build and test deployment in CI (`.github/workflows/docker.yml`)
 - [ ] Deployment to a remote/test environment
 - [ ] Health checks, metrics, PQC observability (partly: live dashboard at
       `/`, cloud `/health` reports ML-KEM state; gateway counts handshakes;
       no `/metrics` endpoint yet)
-- [ ] Architecture and migration document (`docs/architecture.md`)
+- [x] Architecture and migration document (`docs/architecture.md`)
