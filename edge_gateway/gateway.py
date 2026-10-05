@@ -47,7 +47,10 @@ WHAT IS STILL MISSING (known technical debt, tracked in README.md)
       at that moment could exploit. Always pin in a real deployment.
     * Replay state is in memory only, so a restart forgets every sequence
       number and briefly drops traffic from devices that keep counting.
-    * No /health or /metrics endpoint of its own yet - stats are only logged.
+
+OBSERVABILITY
+    /health and /metrics on a separate HTTP port (9100 by default, see
+    admin.py). Logs are one JSON object per line with LOG_FORMAT=json.
 
 Run:
     python -m edge_gateway.gateway --cloud-url http://127.0.0.1:8000
@@ -71,6 +74,7 @@ import requests
 # weakness 8 in README.md; the fix is to extract a shared package, and we have
 # deliberately left it visible rather than hiding it.
 from legacy_device.protocol import decrypt_frame, parse_reading
+from observability import logs
 from pqc_channel import channel
 
 log = logging.getLogger("edge-gateway")
@@ -117,6 +121,13 @@ class GatewayStats:
     handshakes_ok: int = 0
     handshakes_failed: int = 0
 
+    # State for /health, beyond the plain counters.
+    consecutive_forward_failures: int = 0
+    last_forward_ok_at: float | None = None     # time.time()
+    last_error: str | None = None
+    handshake_seconds_sum: float = 0.0
+    handshake_seconds_count: int = 0
+
     # repr=False keeps the lock out of log lines when the dataclass is printed.
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -124,6 +135,37 @@ class GatewayStats:
         """Increment one counter by name."""
         with self._lock:
             setattr(self, name, getattr(self, name) + 1)
+
+    def forward_succeeded(self) -> None:
+        with self._lock:
+            self.forwarded_ok += 1
+            self.consecutive_forward_failures = 0
+            self.last_forward_ok_at = time.time()
+
+    def forward_failed_with(self, error: Exception) -> None:
+        with self._lock:
+            self.forward_failed += 1
+            self.consecutive_forward_failures += 1
+            # Truncated: a long upstream error body has no place in /health.
+            self.last_error = str(error)[:200]
+
+    def handshake_succeeded(self, seconds: float) -> None:
+        with self._lock:
+            self.handshakes_ok += 1
+            self.handshake_seconds_sum += seconds
+            self.handshake_seconds_count += 1
+
+    def state(self) -> dict:
+        """The non-counter fields, for /health and /metrics."""
+        with self._lock:
+            return {
+                "consecutive_forward_failures":
+                    self.consecutive_forward_failures,
+                "last_forward_ok_at": self.last_forward_ok_at,
+                "last_error": self.last_error,
+                "handshake_seconds_sum": self.handshake_seconds_sum,
+                "handshake_seconds_count": self.handshake_seconds_count,
+            }
 
     def snapshot(self) -> dict:
         """Return a consistent copy of all counters.
@@ -191,6 +233,8 @@ class LegacyUplink:
     """
 
     name = "legacy"
+    # The legacy path has no cloud key to pin at all.
+    pin_configured = False
 
     def __init__(self, cloud_url: str) -> None:
         # rstrip so that "http://host:8000/" and "http://host:8000" both build
@@ -208,6 +252,10 @@ class LegacyUplink:
         # Covers 4xx and 5xx: a 401 from a wrong token must not be logged
         # as a success.
         response.raise_for_status()
+
+    def session_info(self) -> None:
+        """No session on the legacy path."""
+        return None
 
 
 @dataclass
@@ -251,6 +299,9 @@ class PqcUplink:
         self.cloud_url = cloud_url.rstrip("/")
         self.stats = stats
         self.pinned = pinned_fingerprint.lower() if pinned_fingerprint else None
+        # Whether the operator configured a pin, as opposed to self.pinned
+        # being filled in by trust on first use. Reported in /health.
+        self.pin_configured = self.pinned is not None
         self.http = http
         self.token = token
         self._lock = threading.Lock()
@@ -285,7 +336,9 @@ class PqcUplink:
             )
             if response.status_code == 401 and attempt == 1:
                 log.info("cloud dropped session %s..., re-handshaking",
-                         session.session_id[:8])
+                         session.session_id[:8],
+                         extra={"event": "session_dropped",
+                                "session": session.session_id[:8]})
                 self._invalidate(session)
                 continue
             if response.status_code >= 400:
@@ -304,6 +357,21 @@ class PqcUplink:
             counter = session.next_counter
             session.next_counter += 1
             return session, counter
+
+    def session_info(self) -> dict | None:
+        """The current session, for /health. Never includes key material."""
+        with self._lock:
+            session = self._session
+            if session is None:
+                return None
+            remaining = session.expires_at - time.monotonic()
+            return {
+                "active": (remaining > 0
+                           and session.next_counter < session.max_messages),
+                "session": session.session_id[:8],
+                "messages_sent": session.next_counter,
+                "renews_in_s": max(0, int(remaining)),
+            }
 
     def _invalidate(self, session: _PqcSession) -> None:
         """Forget a session the cloud has rejected.
@@ -329,13 +397,17 @@ class PqcUplink:
             # KeyError / TypeError / ValueError cover a cloud response that
             # is not the JSON shape we expect, including non-JSON bodies.
             self.stats.bump("handshakes_failed")
-            log.error("ML-KEM handshake failed: %s", exc)
+            log.error("ML-KEM handshake failed: %s", exc,
+                      extra={"event": "handshake_failed", "error": str(exc)})
             raise UplinkError(f"handshake failed: {exc}") from exc
 
-        self.stats.bump("handshakes_ok")
+        elapsed = time.perf_counter() - started
+        self.stats.handshake_succeeded(elapsed)
         log.info("ML-KEM session %s... established in %.1f ms",
-                 session.session_id[:8],
-                 (time.perf_counter() - started) * 1000)
+                 session.session_id[:8], elapsed * 1000,
+                 extra={"event": "handshake_ok",
+                        "session": session.session_id[:8],
+                        "duration_ms": round(elapsed * 1000, 1)})
         return session
 
     def _do_handshake(self) -> _PqcSession:
@@ -360,7 +432,8 @@ class PqcUplink:
         if self.pinned is None:
             log.warning("no cloud key fingerprint configured; trusting %s on "
                         "first use. Pass --cloud-key-fingerprint to pin it.",
-                        actual)
+                        actual, extra={"event": "trust_on_first_use",
+                                       "fingerprint": actual})
             self.pinned = actual
         elif not hmac.compare_digest(actual, self.pinned):
             raise channel.ChannelError(
@@ -442,7 +515,9 @@ class DeviceHandler(socketserver.StreamRequestHandler):
             for raw in self.rfile:
                 if len(raw) > MAX_FRAME_BYTES:
                     log.warning("oversized frame from %s (%d bytes), dropping",
-                                peer, len(raw))
+                                peer, len(raw),
+                                extra={"event": "frame_rejected",
+                                       "reason": "oversized", "peer": peer})
                     self.server.stats.bump("frames_rejected")
                     continue
 
@@ -468,14 +543,19 @@ class DeviceHandler(socketserver.StreamRequestHandler):
             # tampering attempt. AES-CBC without a MAC cannot tell us which,
             # so we log the ambiguity rather than claiming to know. That
             # ambiguity is itself a finding for the report, not a bug here.
-            log.warning("undecodable frame from %s: %s", peer, exc)
+            log.warning("undecodable frame from %s: %s", peer, exc,
+                        extra={"event": "frame_rejected",
+                               "reason": "undecodable", "peer": peer})
             self.server.stats.bump("frames_rejected")
             return
 
         if not self.server.sequences.accept(reading["device_id"],
                                             reading["seq"]):
             log.warning("replayed or stale seq=%d from %s",
-                        reading["seq"], reading["device_id"])
+                        reading["seq"], reading["device_id"],
+                        extra={"event": "replay_dropped",
+                               "device_id": reading["device_id"],
+                               "seq": reading["seq"]})
             self.server.stats.bump("replays_dropped")
             return
 
@@ -497,14 +577,19 @@ class DeviceHandler(socketserver.StreamRequestHandler):
             # count it so the loss is at least visible, and store-and-forward
             # is on the backlog.
             log.error("forward failed for %s seq=%d: %s",
-                      reading["device_id"], reading["seq"], exc)
-            self.server.stats.bump("forward_failed")
+                      reading["device_id"], reading["seq"], exc,
+                      extra={"event": "forward_failed",
+                             "device_id": reading["device_id"],
+                             "seq": reading["seq"], "error": str(exc)})
+            self.server.stats.forward_failed_with(exc)
             return
 
-        self.server.stats.bump("forwarded_ok")
+        self.server.stats.forward_succeeded()
         log.info("forwarded %s seq=%d temp=%.2f via %s",
                  reading["device_id"], reading["seq"], reading["temp_c"],
-                 uplink.name)
+                 uplink.name,
+                 extra={"event": "forwarded", "device_id": reading["device_id"],
+                        "seq": reading["seq"], "crypto": uplink.name})
 
 
 class GatewayServer(socketserver.ThreadingTCPServer):
@@ -560,12 +645,13 @@ def main() -> None:
                         help="expected SHA-256 of the cloud's ML-KEM public "
                              "key (shown in the cloud's /health); without it "
                              "the first key seen is trusted")
+    parser.add_argument("--admin-host", default="127.0.0.1",
+                        help="interface for the /health and /metrics server")
+    parser.add_argument("--admin-port", type=int, default=9100,
+                        help="port for /health and /metrics; 0 disables it")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+    logs.configure("gateway")
 
     stats = GatewayStats()
     if args.crypto == "mlkem":
@@ -573,12 +659,22 @@ def main() -> None:
                            pinned_fingerprint=args.cloud_key_fingerprint)
     else:
         log.warning("running on the LEGACY cloud path: readings and the "
-                    "gateway token cross the network unprotected")
+                    "gateway token cross the network unprotected",
+                    extra={"event": "legacy_mode"})
         uplink = LegacyUplink(args.cloud_url)
 
     server = GatewayServer((args.host, args.port), uplink, stats)
     log.info("gateway listening on %s:%d, cloud at %s via %s",
-             args.host, args.port, uplink.cloud_url, uplink.name)
+             args.host, args.port, uplink.cloud_url, uplink.name,
+             extra={"event": "started", "crypto": uplink.name})
+
+    if args.admin_port:
+        # Imported here so tests that only need the gateway classes do not
+        # pull in the HTTP server.
+        from edge_gateway import admin
+        admin.start(server, args.admin_host, args.admin_port)
+        log.info("health and metrics on http://%s:%d/health and /metrics",
+                 args.admin_host, args.admin_port)
 
     try:
         server.serve_forever()

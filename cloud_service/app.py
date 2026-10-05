@@ -38,7 +38,6 @@ KNOWN TECHNICAL DEBT (tracked in README.md)
     * The long-term private key is stored unencrypted on disk.
     * Served over plain HTTP. v2 payloads are protected by the channel
       itself; v1 payloads and the read APIs are not.
-    * No /metrics endpoint yet; only /health.
 
 CONFIGURATION (environment variables)
     GATEWAY_TOKEN           shared gateway secret (default: legacy value)
@@ -47,6 +46,15 @@ CONFIGURATION (environment variables)
                             pair on every start - fine for tests, wrong for a
                             deployment, because pinned gateways then refuse it.
     LEGACY_INGEST_ENABLED   "false" disables /api/v1/telemetry (default "true")
+    LOG_FORMAT              "json" for one JSON object per log line (default
+                            "text"); see observability/logs.py
+    LOG_LEVEL               default "INFO"
+
+OBSERVABILITY
+    /health    liveness and PQC state, as JSON
+    /metrics   counters in the Prometheus text format: readings per channel,
+               handshakes and rejected messages by reason, active sessions.
+               See docs/observability.md for what each one is for.
 
 Run:
     python -m uvicorn cloud_service.app:app --host 127.0.0.1 --port 8000
@@ -64,12 +72,32 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from observability import logs, metrics
 from pqc_channel import channel
 
+# Configured here rather than in a main(), because uvicorn imports this module
+# directly (after setting up its own logging). Without it the service's own
+# INFO lines were silently dropped: uvicorn only sets up handlers for its own
+# loggers. In JSON mode uvicorn's loggers are adopted too, so its startup and
+# request lines come out as JSON like everything else.
+logs.configure("cloud", adopt=("uvicorn", "uvicorn.error", "uvicorn.access"))
 log = logging.getLogger("cloud-service")
+
+# Counters for /metrics. Declared up front so a mistyped name fails in tests.
+METRICS = metrics.Registry()
+METRICS.counter("cloud_readings_ingested_total",
+                "Readings stored, by delivery path (mlkem or legacy).")
+METRICS.counter("cloud_handshakes_total",
+                "ML-KEM handshakes, by result (ok, invalid_proof, malformed).")
+METRICS.summary("cloud_handshake_duration_seconds",
+                "Cloud-side ML-KEM work per successful handshake.")
+METRICS.counter("cloud_messages_rejected_total",
+                "Ingest requests refused, by reason.")
+METRICS.counter("cloud_sessions_evicted_total",
+                "Sessions dropped early because the session cap was reached.")
 
 # Must match GATEWAY_TOKEN in edge_gateway/gateway.py.
 #
@@ -164,7 +192,8 @@ _kem_public_key, _kem_private_key = _load_or_create_keypair(
     os.environ.get("CLOUD_KEM_KEY_FILE")
 )
 KEM_FINGERPRINT = channel.fingerprint(_kem_public_key)
-log.info("ML-KEM public key fingerprint %s", KEM_FINGERPRINT)
+log.info("ML-KEM public key fingerprint %s", KEM_FINGERPRINT,
+         extra={"event": "key_loaded", "fingerprint": KEM_FINGERPRINT})
 
 
 @dataclass
@@ -194,6 +223,9 @@ def _prune_sessions(now: float) -> None:
     # dicts keep insertion order, so the first keys are the oldest sessions.
     while len(_sessions) >= MAX_SESSIONS:
         del _sessions[next(iter(_sessions))]
+        # A steady rise means something is handshaking far more often than a
+        # gateway should: a bug, or a flood.
+        METRICS.inc("cloud_sessions_evicted_total")
 
 
 class Reading(BaseModel):
@@ -237,6 +269,9 @@ def _require_token(token: str | None) -> None:
         HTTPException: 401 if the token is missing or wrong.
     """
     if token != EXPECTED_TOKEN:
+        METRICS.inc("cloud_messages_rejected_total", reason="invalid_token")
+        log.warning("legacy ingest with an invalid token",
+                    extra={"event": "invalid_token"})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid or missing gateway token",
@@ -297,6 +332,37 @@ def dashboard() -> str:
     return _DASHBOARD.read_text(encoding="utf-8")
 
 
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics() -> str:
+    """Counters and gauges in the Prometheus text format.
+
+    Unauthenticated like /health, so a scraper needs no credentials. It shows
+    traffic volumes and the public key fingerprint, nothing secret, but it
+    does reveal activity levels to anyone who can reach it; in a real
+    deployment it would sit on an internal network only.
+    """
+    now = time.monotonic()
+    with _sessions_lock:
+        active = sum(1 for s in _sessions.values() if s.expires_at > now)
+    families = [
+        *METRICS.families(),
+        metrics.gauge("cloud_active_sessions",
+                      "ML-KEM sessions currently usable.", active),
+        metrics.gauge("cloud_legacy_ingest_enabled",
+                      "1 while the legacy ingest path is open.",
+                      int(LEGACY_INGEST_ENABLED)),
+        # The fingerprint as a label: an alert can compare it across
+        # restarts, which catches a cloud that lost its key file.
+        metrics.gauge("cloud_pqc_key_info",
+                      "The ML-KEM key the cloud is serving.", 1,
+                      algorithm=channel.ALGORITHM,
+                      fingerprint=KEM_FINGERPRINT),
+        metrics.gauge("cloud_uptime_seconds", "Seconds since start.",
+                      int((datetime.now(UTC) - _started_at).total_seconds())),
+    ]
+    return metrics.render(families)
+
+
 def _store(reading: Reading, channel_name: str) -> None:
     """Record one validated reading. Shared by the v1 and v2 paths."""
     record = reading.model_dump()
@@ -313,8 +379,11 @@ def _store(reading: Reading, channel_name: str) -> None:
     with _lock:
         _readings.append(record)
 
+    METRICS.inc("cloud_readings_ingested_total", channel=channel_name)
     log.info("ingested %s seq=%d via %s", reading.device_id, reading.seq,
-             channel_name)
+             channel_name,
+             extra={"event": "reading_ingested", "device_id": reading.device_id,
+                    "seq": reading.seq, "channel": channel_name})
 
 
 @app.post("/api/v1/telemetry", status_code=status.HTTP_202_ACCEPTED)
@@ -331,11 +400,11 @@ def ingest(reading: Reading,
     """
     if not LEGACY_INGEST_ENABLED:
         # 410 Gone rather than 404: the endpoint existed and was retired on
-        # purpose, which tells a stale gateway exactly what happened.
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail="legacy ingest is disabled; upgrade the gateway to ML-KEM",
-        )
+        # purpose, which tells a stale gateway exactly what happened. Counted,
+        # because after the migration any traffic here is a gateway that was
+        # missed, or someone probing the old path.
+        raise _reject("legacy_disabled", status.HTTP_410_GONE,
+                      "legacy ingest is disabled; upgrade the gateway to ML-KEM")
 
     _require_token(x_gateway_token)
     _store(reading, "legacy")
@@ -376,9 +445,23 @@ class SealedReading(BaseModel):
                             description="AES-256-GCM output, base64")
 
 
-def _bad_request(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                         detail=detail)
+def _reject(reason: str, status_code: int, detail,
+            counter: str = "cloud_messages_rejected_total") -> HTTPException:
+    """Count, log and build the error for one refused request.
+
+    Every refusal goes through here, so /metrics and the logs always agree,
+    and each reason can be watched on its own: a burst of
+    authentication_failed means tampering, replay means captured traffic is
+    being resent, unknown_session after a restart is normal.
+    """
+    if counter == "cloud_handshakes_total":
+        METRICS.inc(counter, result=reason)
+    else:
+        METRICS.inc(counter, reason=reason)
+    log.warning("rejected request: %s", reason,
+                extra={"event": "request_rejected", "reason": reason,
+                       "status": status_code})
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 @app.get("/api/v2/pqc/public-key")
@@ -411,20 +494,23 @@ def pqc_session(request: SessionRequest) -> dict:
                                          channel.PUBLIC_KEY_BYTES)
         proof = channel.b64decode(request.gateway_proof, 32)
     except channel.ChannelError as exc:
-        raise _bad_request(str(exc)) from exc
+        raise _reject("malformed", status.HTTP_400_BAD_REQUEST, str(exc),
+                      counter="cloud_handshakes_total") from exc
 
     # Check the gateway before spending any ML-KEM work on the request.
     # compare_digest is constant-time, unlike the v1 path's plain !=.
     expected = channel.gateway_proof(EXPECTED_TOKEN, static_ct, ephemeral_pk)
     if not hmac.compare_digest(expected, proof):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="invalid gateway proof")
+        raise _reject("invalid_proof", status.HTTP_401_UNAUTHORIZED,
+                      "invalid gateway proof", counter="cloud_handshakes_total")
 
+    started = time.perf_counter()
     try:
         static_ss = channel.decapsulate(_kem_private_key, static_ct)
         ephemeral_ss, ephemeral_ct = channel.encapsulate(ephemeral_pk)
     except channel.ChannelError as exc:
-        raise _bad_request(str(exc)) from exc
+        raise _reject("malformed", status.HTTP_400_BAD_REQUEST, str(exc),
+                      counter="cloud_handshakes_total") from exc
 
     aead_key, confirm_key = channel.derive_session_keys(
         static_ss, ephemeral_ss,
@@ -439,7 +525,13 @@ def pqc_session(request: SessionRequest) -> dict:
         _sessions[session_id] = Session(aead_key=aead_key,
                                         expires_at=now + SESSION_TTL_S)
 
-    log.info("ML-KEM session %s... opened", session_id[:8])
+    METRICS.inc("cloud_handshakes_total", result="ok")
+    METRICS.observe("cloud_handshake_duration_seconds",
+                    time.perf_counter() - started)
+    # Only the first 8 characters of the session id: enough to match it with
+    # the gateway's log, without writing a usable session id into logs.
+    log.info("ML-KEM session %s... opened", session_id[:8],
+             extra={"event": "session_opened", "session": session_id[:8]})
     return {
         "session_id": session_id,
         "ephemeral_ciphertext": channel.b64encode(ephemeral_ct),
@@ -468,15 +560,16 @@ def ingest_sealed(message: SealedReading) -> dict:
         nonce = channel.b64decode(message.nonce, channel.NONCE_BYTES)
         sealed = channel.b64decode(message.ciphertext)
     except channel.ChannelError as exc:
-        raise _bad_request(str(exc)) from exc
+        raise _reject("malformed", status.HTTP_400_BAD_REQUEST,
+                      str(exc)) from exc
 
     with _sessions_lock:
         session = _sessions.get(message.session_id)
         if session is None or session.expires_at <= time.monotonic():
             # A fixed detail string the gateway matches on to trigger a new
             # handshake.
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="unknown_session")
+            raise _reject("unknown_session", status.HTTP_401_UNAUTHORIZED,
+                          "unknown_session")
         aead_key = session.aead_key
 
     # Decrypt outside the lock: it is the slowest step and needs no shared
@@ -485,7 +578,8 @@ def ingest_sealed(message: SealedReading) -> dict:
         plaintext = channel.open_sealed(aead_key, nonce, message.session_id,
                                         sealed)
     except channel.ChannelError as exc:
-        raise _bad_request(str(exc)) from exc
+        raise _reject("authentication_failed", status.HTTP_400_BAD_REQUEST,
+                      str(exc)) from exc
 
     # Only record the counter after authentication succeeds. Recording it
     # first would let anyone burn counters with garbage and block the
@@ -493,20 +587,19 @@ def ingest_sealed(message: SealedReading) -> dict:
     counter = channel.counter_from(nonce)
     with _sessions_lock:
         if counter in session.seen_counters:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="replayed message")
+            raise _reject("replay", status.HTTP_409_CONFLICT,
+                          "replayed message")
         if len(session.seen_counters) >= SESSION_MAX_MESSAGES:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="unknown_session")
+            raise _reject("session_exhausted", status.HTTP_401_UNAUTHORIZED,
+                          "unknown_session")
         session.seen_counters.add(counter)
 
     try:
         reading = Reading.model_validate_json(plaintext)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(include_url=False, include_input=False),
-        ) from exc
+        raise _reject("invalid_reading", status.HTTP_422_UNPROCESSABLE_ENTITY,
+                      exc.errors(include_url=False, include_input=False)
+                      ) from exc
 
     _store(reading, "mlkem")
     return {"accepted": True, "device_id": reading.device_id,

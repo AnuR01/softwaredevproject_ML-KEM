@@ -9,6 +9,8 @@ services:
       GATEWAY_TOKEN: ${GATEWAY_TOKEN:?copy .env.example to .env and set GATEWAY_TOKEN}
       LEGACY_INGEST_ENABLED: ${LEGACY_INGEST_ENABLED:-true}
       CLOUD_KEM_KEY_FILE: /keys/cloud_kem.json
+      # One JSON object per log line; see docs/observability.md.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - cloud-keys:/keys
     ports:
@@ -37,8 +39,11 @@ services:
       CLOUD_URL: http://cloud:8000
       CLOUD_KEY_FINGERPRINT: ${CLOUD_KEY_FINGERPRINT:?set CLOUD_KEY_FINGERPRINT from cloud /health}
       CRYPTO_MODE: ${CRYPTO_MODE:-mlkem}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     ports:
       - "127.0.0.1:9000:9000"
+      # /health and /metrics. Published on the host's localhost only.
+      - "127.0.0.1:9100:9100"
     depends_on:
       cloud:
         condition: service_healthy
@@ -47,10 +52,14 @@ services:
         - CMD
         - python
         - -c
+        # Both servers must answer: the device port, and /health on the
+        # admin port. "degraded" still counts as healthy here, because a
+        # gateway whose cloud is down is not fixed by restarting it.
         - >-
-          import socket;
-          s=socket.create_connection(('127.0.0.1',9000),2);
-          s.close()
+          import json,socket,urllib.request;
+          socket.create_connection(('127.0.0.1',9000),2).close();
+          d=json.load(urllib.request.urlopen('http://127.0.0.1:9100/health', timeout=2));
+          assert d['status'] in ('ok','degraded')
       interval: 5s
       timeout: 3s
       retries: 12

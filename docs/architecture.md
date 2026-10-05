@@ -196,9 +196,9 @@ sensor deployment like this one. Owners are roles, not people.
 | R8 | Shared gateway token leaked | M | M | Never sent on the ML-KEM path (HMAC proof only) | Medium. One token for all gateways, no rotation; a leaked token lets anyone open sessions and inject readings | Security owner |
 | R9 | Weakness in the ML-KEM implementation (timing side channels) | L | H | Library pinned to an exact version (`kyber-py==1.2.0`); isolated behind `pqc_channel/` | Medium. kyber-py is pure Python and not constant-time; not for production | Security owner |
 | R10 | Our own handshake design has a flaw | L | H | Built from standard parts; 38 channel and integration tests, 19 failure tests; mutation testing | Medium. It is a custom composition, not a standardised and reviewed protocol | Security owner |
-| R11 | Readings lost when the cloud is unreachable | M | L | Losses counted (`forward_failed`) | Medium. No store-and-forward queue | Gateway operator |
+| R11 | Readings lost when the cloud is unreachable | M | L | Losses counted and exposed (`gateway_forwards_total{result="failed"}`, gateway `/health` turns `degraded`) | Medium. No store-and-forward queue | Gateway operator |
 | R12 | Readings lost when the cloud restarts | H | L | None | Medium. In-memory storage only | Cloud operator |
-| R13 | Read APIs and dashboard readable by anyone on the network path | M | M | None | Medium. Plain HTTP, no authentication on read endpoints | Cloud operator |
+| R13 | Read APIs, dashboard, `/health` and `/metrics` readable by anyone on the network path | M | M | Bound to localhost by default; nothing secret in them | Medium. Plain HTTP, no authentication on read endpoints | Cloud operator |
 | R14 | AI-generated code accepted without understanding | M | H | Every change via pull request with review; tests, static analysis and mutation testing in CI; prompts, outputs and decisions recorded in the group's AI usage log | Medium. Review depth depends on the reviewer's knowledge of cryptography | Whole group |
 
 ## 7. Technical debt and recommendations
