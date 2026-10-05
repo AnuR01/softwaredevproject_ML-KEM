@@ -147,7 +147,7 @@ security findings in the report - for example
 from a different device without knowing the key, which the gateway accepts as
 valid.
 
-## Baseline measurements
+## Baseline measurements 
 
 Taken **before** ML-KEM integration, so the report can show the real cost of
 the migration rather than an unanchored number. 
