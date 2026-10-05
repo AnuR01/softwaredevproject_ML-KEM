@@ -127,6 +127,18 @@ Each stored reading has a `channel` field (`mlkem` or `legacy`) showing which
 path delivered it, and `/health` reports the ML-KEM fingerprint and the number
 of active sessions.
 
+Health checks and metrics for operators (all described in
+[`docs/observability.md`](docs/observability.md), including what to alert on):
+
+```bash
+curl http://127.0.0.1:9100/health     # gateway: ok, or degraded with the reason
+curl http://127.0.0.1:9100/metrics    # gateway, Prometheus text format
+curl http://127.0.0.1:8000/metrics    # cloud: readings per channel, handshakes, rejections
+```
+
+Set `LOG_FORMAT=json` to get one JSON object per log line (the default in
+Docker Compose).
+
 Interactive API docs are served at <http://127.0.0.1:8000/docs>.
 
 ## Running with Docker Compose
@@ -228,7 +240,7 @@ scenario.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # all 118 tests
+python -m pytest              # all 142 tests
 python -m pytest -m security  # only the tests that demonstrate weaknesses
 python -m pytest -m failure   # only the failure tests (cloud down, timeouts, ...)
 ```
@@ -241,6 +253,7 @@ python -m pytest -m failure   # only the failure tests (cloud down, timeouts, ..
 | `tests/test_pqc_channel.py` | ML-KEM sizes, handshake, forward secrecy, AES-GCM tamper detection |
 | `tests/test_pqc_integration.py` | Real gateway uplink against the real cloud: pinning, replay, tampering, session recovery, full device-to-cloud chain |
 | `tests/test_failures.py` | Cloud down, blocked handshake (no fallback to legacy), timeouts, bad replies, lost cloud key, session cap, concurrency |
+| `tests/test_observability.py` | Metrics format and counters, gateway `/health` and `/metrics` over HTTP, JSON logs |
 
 CI runs the whole suite on every push (`.github/workflows/ci.yml`), plus
 static analysis (`ruff`, including security rules) and a dependency
@@ -350,8 +363,8 @@ modernization.
    *Open.*
 6. **In-memory storage only.** The cloud loses all data on restart. ML-KEM
    sessions are in memory too (gateways re-handshake automatically). *Open.*
-7. **No containers or metrics endpoints yet.** *Containers are now supported
-   with Docker Compose; a standard `/metrics` endpoint remains open.*
+7. **No containers or metrics endpoints yet.** *Fixed: Docker Compose
+   deployment, `/health` and `/metrics` on cloud and gateway, JSON logs.*
 8. **Shared protocol module.** `edge_gateway` imports from
    `legacy_device.protocol`, which couples two separately deployable services.
    *Open for the legacy code; new shared code lives in its own `pqc_channel`
@@ -378,8 +391,10 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] ML-KEM-768 integration on the gateway-cloud path, with measurements
 - [x] Container images and local Docker Compose deployment
 - [x] Automated image build and test deployment in CI (`.github/workflows/docker.yml`)
-- [ ] Deployment to a remote/test environment
-- [ ] Health checks, metrics, PQC observability (partly: live dashboard at
-      `/`, cloud `/health` reports ML-KEM state; gateway counts handshakes;
-      no `/metrics` endpoint yet)
+- [x] Deployment to a test environment (ephemeral, in CI; a remote server
+      is described in `docs/deployment.md` but not set up)
+- [x] Health checks, metrics, PQC observability, JSON logs
+      (`docs/observability.md`)
+- [x] Final evaluation: strengths, weaknesses, technical debt
+      (`docs/evaluation.md`)
 - [x] Architecture and migration document (`docs/architecture.md`)

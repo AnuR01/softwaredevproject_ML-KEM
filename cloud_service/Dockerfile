@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY cloud_service /app/cloud_service
 COPY pqc_channel /app/pqc_channel
+COPY observability /app/observability
 
 RUN mkdir -p /keys && chown -R appuser:appuser /app /keys
 USER appuser

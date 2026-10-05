@@ -18,11 +18,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY edge_gateway /app/edge_gateway
 COPY legacy_device /app/legacy_device
 COPY pqc_channel /app/pqc_channel
+COPY observability /app/observability
 COPY edge_gateway/entrypoint.sh /usr/local/bin/gateway-entrypoint
 RUN chmod 0555 /usr/local/bin/gateway-entrypoint \
     && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 9000
+EXPOSE 9000 9100
 
 ENTRYPOINT ["gateway-entrypoint"]

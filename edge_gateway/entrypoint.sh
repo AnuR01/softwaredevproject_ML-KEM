@@ -19,6 +19,8 @@ fi
 exec python -m edge_gateway.gateway \
   --host "${GATEWAY_HOST:-0.0.0.0}" \
   --port "${GATEWAY_PORT:-9000}" \
+  --admin-host "${GATEWAY_ADMIN_HOST:-0.0.0.0}" \
+  --admin-port "${GATEWAY_ADMIN_PORT:-9100}" \
   --cloud-url "$CLOUD_URL" \
   --crypto "${CRYPTO_MODE:-mlkem}" \
   --cloud-key-fingerprint "$CLOUD_KEY_FINGERPRINT"

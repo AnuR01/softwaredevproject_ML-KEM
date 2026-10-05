@@ -25,6 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     # Building three images and starting the stack takes a few minutes.
     timeout-minutes: 20
+    # Recorded by GitHub as a deployment to the "test" environment (see the
+    # repository's Deployments page). The environment is the runner itself and
+    # lasts for this run only; docs/deployment.md explains the choice.
+    environment:
+      name: test
 
     env:
       # A throwaway value for this test deployment only. A real deployment
@@ -108,6 +113,40 @@ jobs:
             echo "::error::expected ML-KEM readings and no legacy ones (mlkem=$mlkem, legacy=$legacy)"
             exit 1
           fi
+
+      # Post-quantum observability on the deployed stack: the endpoints an
+      # operator would watch must exist and agree with what just happened.
+      - name: Health checks, metrics and JSON logs
+        run: |
+          gateway_health=$(curl --fail --silent --show-error http://127.0.0.1:9100/health)
+          echo "$gateway_health" | jq .
+          [ "$(echo "$gateway_health" | jq -r .status)" = "ok" ] \
+            || { echo "::error::gateway health is not ok"; exit 1; }
+          [ "$(echo "$gateway_health" | jq .cloud_key_pinned)" = "true" ] \
+            || { echo "::error::gateway is not pinned"; exit 1; }
+
+          gateway_metrics=$(curl --fail --silent --show-error http://127.0.0.1:9100/metrics)
+          echo "$gateway_metrics" | grep -v '^#'
+          echo "$gateway_metrics" | grep -q '^gateway_uplink_info{crypto="mlkem",pinned="true"} 1$' \
+            || { echo "::error::gateway_uplink_info is not mlkem/pinned"; exit 1; }
+
+          cloud_metrics=$(curl --fail --silent --show-error http://127.0.0.1:8000/metrics)
+          echo "$cloud_metrics" | grep -v '^#'
+          echo "$cloud_metrics" | grep -Eq '^cloud_readings_ingested_total\{channel="mlkem"\} [1-9]' \
+            || { echo "::error::no ML-KEM readings counted"; exit 1; }
+          echo "$cloud_metrics" | grep -q '^cloud_legacy_ingest_enabled 0$' \
+            || { echo "::error::legacy ingest should be off"; exit 1; }
+
+          # Every log line from both services must be valid JSON.
+          for service in cloud gateway; do
+            docker compose logs --no-color --no-log-prefix "$service" > "$service.log"
+            lines=$(grep -c . "$service.log")
+            if ! jq -e . "$service.log" > /dev/null; then
+              echo "::error::$service wrote a log line that is not JSON"
+              exit 1
+            fi
+            echo "$service: $lines log lines, all JSON"
+          done
 
       - name: Show container state and logs
         if: failure()
