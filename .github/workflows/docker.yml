@@ -1,0 +1,120 @@
+# Builds the Docker images and deploys the whole system with Docker Compose on
+# the CI runner, as an automated test environment. Runs separately from ci.yml
+# so the fast unit tests report first and a Docker problem is easy to spot.
+#
+# It checks that the deployment works end to end, not only that it builds:
+# a reading from a device container must reach the cloud over ML-KEM.
+name: Docker build and deployment test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    # Building three images and starting the stack takes a few minutes.
+    timeout-minutes: 20
+
+    env:
+      # A throwaway value for this test deployment only. A real deployment
+      # takes it from a secret store, never from the repository.
+      GATEWAY_TOKEN: ci-test-token-not-a-real-secret
+      # compose.yaml refuses to load without a fingerprint. The real one only
+      # exists once the cloud has generated its key, so this placeholder is
+      # replaced in the "Pin the cloud key" step below.
+      CLOUD_KEY_FINGERPRINT: "0000000000000000000000000000000000000000000000000000000000000000"
+      # Test the end state of the migration: legacy ingest switched off, so
+      # every reading must arrive over ML-KEM.
+      LEGACY_INGEST_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose.yaml
+        run: docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build --pull
+
+      # The Dockerfiles create an unprivileged user (uid 10001). Check every
+      # image really runs as that user, so a later edit cannot silently make a
+      # container run as root.
+      - name: Containers run as non-root
+        run: |
+          for service in cloud gateway device; do
+            uid=$(docker compose run -T --rm --no-deps --entrypoint id "$service" -u)
+            echo "$service runs as uid $uid"
+            if [ "$uid" = "0" ]; then
+              echo "::error::$service runs as root"
+              exit 1
+            fi
+          done
+
+      # Fail closed: the gateway entrypoint must refuse a malformed
+      # fingerprint instead of starting with trust on first use.
+      - name: Gateway refuses a malformed fingerprint
+        run: |
+          set +e
+          docker compose run -T --rm --no-deps -e CLOUD_KEY_FINGERPRINT=not-a-fingerprint gateway
+          status=$?
+          set -e
+          echo "gateway exit code: $status"
+          if [ "$status" -ne 64 ]; then
+            echo "::error::expected exit code 64, got $status"
+            exit 1
+          fi
+
+      - name: Start the cloud
+        run: docker compose up --detach --wait --wait-timeout 120 cloud
+
+      # The same steps as docs/deployment.md: read the fingerprint from the
+      # cloud, then give it to the gateway. In CI the runner itself is the
+      # trusted channel, because the cloud runs on it.
+      - name: Pin the cloud key
+        run: |
+          fingerprint=$(curl --fail --silent --show-error \
+            http://127.0.0.1:8000/health | jq -r .pqc.public_key_fingerprint)
+          if ! printf '%s' "$fingerprint" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::unexpected fingerprint '$fingerprint'"
+            exit 1
+          fi
+          echo "cloud key fingerprint: $fingerprint"
+          echo "CLOUD_KEY_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
+
+      - name: Start the gateway and a device
+        run: docker compose up --detach --wait --wait-timeout 120 gateway device
+
+      - name: Smoke test (a new device's reading arrives over ML-KEM)
+        run: python3 scripts/compose_smoke_test.py
+
+      - name: Every stored reading came over ML-KEM
+        run: |
+          health=$(curl --fail --silent --show-error http://127.0.0.1:8000/health)
+          echo "$health" | jq .pqc
+          mlkem=$(echo "$health" | jq .pqc.readings_by_channel.mlkem)
+          legacy=$(echo "$health" | jq .pqc.readings_by_channel.legacy)
+          if [ "$mlkem" -lt 1 ] || [ "$legacy" -ne 0 ]; then
+            echo "::error::expected ML-KEM readings and no legacy ones (mlkem=$mlkem, legacy=$legacy)"
+            exit 1
+          fi
+
+      - name: Show container state and logs
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color --timestamps
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes --remove-orphans
