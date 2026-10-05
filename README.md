@@ -123,6 +123,101 @@ of active sessions.
 
 Interactive API docs are served at <http://127.0.0.1:8000/docs>.
 
+## Running with Docker Compose
+
+Docker Desktop with Compose support is required. No paid Docker account is
+needed for local builds. The Compose setup runs the cloud, gateway, and one
+legacy device in containers and persists the cloud ML-KEM key in a named
+volume.
+
+### First-time setup
+
+Copy the local configuration template. The `.env` file is ignored by Git and
+must not be committed:
+
+```bash
+cp .env.example .env
+```
+
+Start the cloud first so it can create or load its persistent ML-KEM key:
+
+```bash
+docker compose up -d --build cloud
+```
+
+Read the cloud fingerprint:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Copy `pqc.public_key_fingerprint` from the response into
+`CLOUD_KEY_FINGERPRINT` in `.env`. The gateway deliberately refuses to start
+without a valid 64-character fingerprint in the containerized deployment.
+
+Start the pinned gateway and device:
+
+```bash
+docker compose up -d --build gateway device
+```
+
+Check that all services are healthy:
+
+```bash
+docker compose ps
+```
+
+### Viewing the running system
+
+- Dashboard: <http://127.0.0.1:8000/>
+- API documentation: <http://127.0.0.1:8000/docs>
+- Health and ML-KEM status: <http://127.0.0.1:8000/health>
+
+The dashboard shows stored readings, devices, active ML-KEM sessions, the
+cloud fingerprint, and the percentage of readings delivered through ML-KEM.
+
+### Container smoke test
+
+After the cloud and gateway are running, verify a real device-to-cloud reading:
+
+```bash
+python scripts/compose_smoke_test.py
+```
+
+The test starts a temporary device container and verifies that its reading
+arrives with `channel: "mlkem"`.
+
+### Logs and shutdown
+
+```bash
+docker compose logs --follow gateway
+docker compose logs --follow cloud
+docker compose down
+```
+
+`docker compose down` preserves the named ML-KEM key volume. To remove the
+key and force the cloud to generate a new key, use:
+
+```bash
+docker compose down --volumes
+```
+
+After generating a new key, update `CLOUD_KEY_FINGERPRINT` in `.env` before
+starting the gateway again.
+
+### Explicit rollback mode
+
+The gateway does not automatically downgrade if the ML-KEM handshake fails.
+For a deliberate operator rollback only, set this in `.env`:
+
+```text
+CRYPTO_MODE=legacy
+```
+
+Restart the gateway after changing the mode. The legacy mode is intentionally
+less secure and should only be used during a documented migration or recovery
+scenario.
+
 ## Tests
 
 ```bash
@@ -243,8 +338,8 @@ modernization.
    *Open.*
 6. **In-memory storage only.** The cloud loses all data on restart. ML-KEM
    sessions are in memory too (gateways re-handshake automatically). *Open.*
-7. **No containers or metrics endpoints yet.** *CI done; containers and
-   metrics open.*
+7. **No containers or metrics endpoints yet.** *Containers are now supported
+   with Docker Compose; a standard `/metrics` endpoint remains open.*
 8. **Shared protocol module.** `edge_gateway` imports from
    `legacy_device.protocol`, which couples two separately deployable services.
    *Open for the legacy code; new shared code lives in its own `pqc_channel`
@@ -268,7 +363,8 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] Automated tests and baseline measurements captured
 - [x] CI pipeline (GitHub Actions)
 - [x] ML-KEM-768 integration on the gateway-cloud path, with measurements
-- [ ] Containers and deployment to a test environment
+- [x] Container images and local Docker Compose deployment
+- [ ] Deployment to a remote/test environment
 - [ ] Health checks, metrics, PQC observability (partly: live dashboard at
       `/`, cloud `/health` reports ML-KEM state; gateway counts handshakes;
       no `/metrics` endpoint yet)
