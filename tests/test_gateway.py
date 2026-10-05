@@ -5,7 +5,7 @@ The unit tests cover the replay tracker and the stats counters. The
 integration tests start a real GatewayServer on an ephemeral port, connect a
 socket the way a device would, and replace the outbound HTTP call with a stub -
 so the gateway's threading, framing and error handling are all exercised
-without needing a running cloud service. 
+without needing a running cloud service.
 """
 
 import socket
@@ -17,7 +17,6 @@ import requests
 
 from edge_gateway import gateway as gw
 from legacy_device.protocol import build_reading, encrypt_frame
-
 
 # --------------------------------------------------------------------------
 # Unit tests

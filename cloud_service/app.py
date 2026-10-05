@@ -5,7 +5,7 @@ WHAT THIS IS
     The far end of the chain. Gateways POST readings here; operators and other
     systems read them back. FastAPI generates an interactive API console at
     /docs from the type annotations below, which is how we demonstrate the
-    system without writing a UI. 
+    system without writing a UI.
 
 WHY IT IS SHAPED LIKE THIS
     Small on purpose. The project brief asks us to keep the system plain, and
@@ -60,7 +60,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, status
@@ -119,11 +119,11 @@ app = FastAPI(
 # Uvicorn may serve requests from multiple threads, so every access is guarded.
 # deque.append is itself atomic, but read paths below copy the whole deque and
 # would otherwise be able to observe a partially-updated structure.
-_readings: deque[dict] = deque(maxlen=MAX_STORED_READINGS) 
+_readings: deque[dict] = deque(maxlen=MAX_STORED_READINGS)
 _lock = threading.Lock()
 
 # Recorded at import time so /health can report uptime.
-_started_at = datetime.now(timezone.utc)
+_started_at = datetime.now(UTC)
 
 
 def _load_or_create_keypair(path: str | None) -> tuple[bytes, bytes]:
@@ -264,7 +264,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "uptime_s": int(
-            (datetime.now(timezone.utc) - _started_at).total_seconds()
+            (datetime.now(UTC) - _started_at).total_seconds()
         ),
         "stored_readings": stored,
         # Lets an operator confirm which key the cloud is serving (compare it
@@ -304,7 +304,7 @@ def _store(reading: Reading, channel_name: str) -> None:
     # Server-side receive time, kept separate from the device's own uptime
     # field. Device clocks cannot be trusted - many have none at all - so
     # ordering and freshness are judged by when the cloud saw the reading.
-    record["received_at"] = datetime.now(timezone.utc).isoformat()
+    record["received_at"] = datetime.now(UTC).isoformat()
 
     # Which path delivered it. During the migration this is how you prove,
     # reading by reading, that traffic has moved to the post-quantum channel.

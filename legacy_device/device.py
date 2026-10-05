@@ -70,12 +70,16 @@ class SensorSimulator:
         Both sensors are read together and reported in a single frame. That is
         a deliberate choice for a battery-powered device: one frame per sample
         cycle costs half the radio time of two.
+
+        `random` is fine here: it simulates sensor noise, not a secret. The
+        "noqa: S311" marks below record that the static-analysis warning was
+        reviewed. The frame IV in protocol.py does use os.urandom.
         """
         self.temp_c = round(
-            min(35.0, max(5.0, self.temp_c + random.uniform(-0.3, 0.3))), 2
+            min(35.0, max(5.0, self.temp_c + random.uniform(-0.3, 0.3))), 2  # noqa: S311
         )
         self.humidity = round(
-            min(95.0, max(10.0, self.humidity + random.uniform(-0.8, 0.8))), 2
+            min(95.0, max(10.0, self.humidity + random.uniform(-0.8, 0.8))), 2  # noqa: S311
         )
         return self.temp_c, self.humidity
 

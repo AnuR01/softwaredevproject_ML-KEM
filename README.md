@@ -227,8 +227,9 @@ scenario.
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # all 99 tests
+python -m pytest              # all 118 tests
 python -m pytest -m security  # only the tests that demonstrate weaknesses
+python -m pytest -m failure   # only the failure tests (cloud down, timeouts, ...)
 ```
 
 | File | Covers |
@@ -238,8 +239,13 @@ python -m pytest -m security  # only the tests that demonstrate weaknesses
 | `tests/test_cloud.py` | Legacy ingest, validation, read APIs, dashboard |
 | `tests/test_pqc_channel.py` | ML-KEM sizes, handshake, forward secrecy, AES-GCM tamper detection |
 | `tests/test_pqc_integration.py` | Real gateway uplink against the real cloud: pinning, replay, tampering, session recovery, full device-to-cloud chain |
+| `tests/test_failures.py` | Cloud down, blocked handshake (no fallback to legacy), timeouts, bad replies, lost cloud key, session cap, concurrency |
 
-CI runs the whole suite on every push (`.github/workflows/ci.yml`).
+CI runs the whole suite on every push (`.github/workflows/ci.yml`), plus
+static analysis (`ruff`, including security rules) and a dependency
+vulnerability scan (`pip-audit`). How every finding was handled, and how the
+failure tests were checked with mutation testing, is in
+[`docs/quality-checks.md`](docs/quality-checks.md).
 
 Tests marked `security` deliberately assert that a weakness is real and
 exploitable, rather than guarding against it. They are the evidence behind the
@@ -367,6 +373,7 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] Baseline: device, gateway, cloud running end to end
 - [x] Automated tests and baseline measurements captured
 - [x] CI pipeline (GitHub Actions)
+- [x] Static analysis, dependency scanning and failure tests in CI
 - [x] ML-KEM-768 integration on the gateway-cloud path, with measurements
 - [x] Container images and local Docker Compose deployment
 - [ ] Deployment to a remote/test environment

@@ -66,13 +66,12 @@ from dataclasses import dataclass, field
 
 import requests
 
-from pqc_channel import channel
-
 # Imported rather than duplicated so there is exactly one definition of the
 # wire format. It does couple two separately deployable services, which is
 # weakness 8 in README.md; the fix is to extract a shared package, and we have
 # deliberately left it visible rather than hiding it.
 from legacy_device.protocol import decrypt_frame, parse_reading
+from pqc_channel import channel
 
 log = logging.getLogger("edge-gateway")
 
@@ -541,8 +540,13 @@ class GatewayServer(socketserver.ThreadingTCPServer):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Edge gateway")
-    parser.add_argument("--host", default="0.0.0.0",
-                        help="interface to listen on for devices")
+    # Localhost by default: the legacy port accepts unauthenticated frames, so
+    # exposing it to the network should be a deliberate choice (--host
+    # 0.0.0.0, as the container entrypoint does). Found by static analysis
+    # (ruff S104 / bandit B104).
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="interface to listen on for devices "
+                             "(0.0.0.0 for all interfaces)")
     parser.add_argument("--port", type=int, default=9000,
                         help="TCP port devices connect to")
     parser.add_argument("--cloud-url", default="http://127.0.0.1:8000",
