@@ -377,6 +377,7 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] Static analysis, dependency scanning and failure tests in CI
 - [x] ML-KEM-768 integration on the gateway-cloud path, with measurements
 - [x] Container images and local Docker Compose deployment
+- [x] Automated image build and test deployment in CI (`.github/workflows/docker.yml`)
 - [ ] Deployment to a remote/test environment
 - [ ] Health checks, metrics, PQC observability (partly: live dashboard at
       `/`, cloud `/health` reports ML-KEM state; gateway counts handshakes;

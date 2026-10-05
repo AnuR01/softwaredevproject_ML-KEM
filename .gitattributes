@@ -1,0 +1,4 @@
+# Shell scripts run inside Linux containers, where Windows (CRLF) line endings
+# break them ("/bin/sh^M: not found"). Keep them LF on every checkout, even
+# with core.autocrlf=true on Windows.
+*.sh text eol=lf

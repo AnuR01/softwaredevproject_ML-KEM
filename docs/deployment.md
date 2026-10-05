@@ -92,8 +92,12 @@ Do not commit `.env`, private key files, or the `.keys` directory.
 
 ## CI and remote test environments
 
-The CI workflow should build the images and run the smoke test as a separate
-job after unit tests. A remote test environment can use the same Compose file
+`.github/workflows/docker.yml` does this on every push and pull request: it
+builds the three images, checks they run as non-root, checks the gateway
+refuses a malformed fingerprint, deploys the stack with the cloud key pinned
+and legacy ingest switched off, runs the smoke test, and checks that every
+stored reading arrived over ML-KEM. The GitHub runner acts as the test
+environment. A remote test environment can use the same Compose file
 on a university VM or another Linux host. Publishing images to Docker Hub or
 GitHub Container Registry is optional and is not necessary for local grading.
 
