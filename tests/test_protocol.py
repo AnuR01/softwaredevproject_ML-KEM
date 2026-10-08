@@ -85,7 +85,7 @@ def test_typical_frame_fits_the_device_buffer():
     """A normal reading must fit, with room to spare.
 
     The measured size is the baseline number cited in the report and in
-    docs/brief.html, so this test pins it: if the record layout changes, the
+    README.md, so this test pins it: if the record layout changes, the
     documented figure has to change with it.
     """
     frame = encrypt_frame(build_reading("dev-001", 1, 21.50, 44.20, 12))

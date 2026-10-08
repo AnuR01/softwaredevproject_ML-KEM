@@ -133,7 +133,7 @@ The device link cannot be migrated in software. The options, in order of cost:
 1. **Compensating controls now:** keep devices and gateway on an isolated
    network segment (or a direct serial link), restrict who can reach port
    9000 (the gateway listens on localhost by default and must be opened
-   explicitly; see `docs/quality-checks.md`), and physically secure the devices, because one stolen device
+   explicitly), and physically secure the devices, because one stolen device
    reveals the fleet key.
 2. **Replace devices at end of life** with hardware that can do modern
    authenticated encryption with a unique key per device, and ideally

@@ -9,7 +9,7 @@ services:
       GATEWAY_TOKEN: ${GATEWAY_TOKEN:?copy .env.example to .env and set GATEWAY_TOKEN}
       LEGACY_INGEST_ENABLED: ${LEGACY_INGEST_ENABLED:-true}
       CLOUD_KEM_KEY_FILE: /keys/cloud_kem.json
-      # One JSON object per log line; see docs/observability.md.
+      # One JSON object per log line; see observability/logs.py.
       LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - cloud-keys:/keys

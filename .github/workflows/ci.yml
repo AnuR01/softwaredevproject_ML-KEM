@@ -62,8 +62,8 @@ jobs:
         run: python -m pytest -m failure -v
 
   # Static analysis runs once, not per Python version: the findings do not
-  # depend on the interpreter. Triage of every finding is in
-  # docs/quality-checks.md.
+  # depend on the interpreter. Accepted exceptions are listed, with reasons,
+  # in pyproject.toml.
   static-analysis:
     runs-on: ubuntu-latest
     timeout-minutes: 10

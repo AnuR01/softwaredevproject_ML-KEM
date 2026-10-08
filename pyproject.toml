@@ -1,5 +1,5 @@
-# Static analysis configuration. CI runs `ruff check .`; see
-# docs/quality-checks.md for how each finding was triaged.
+# Static analysis configuration. CI runs `ruff check .`; every exception
+# below says why it is accepted.
 
 [tool.ruff]
 target-version = "py311"
