@@ -68,7 +68,7 @@ curl "http://127.0.0.1:8000/api/v1/telemetry?limit=5"
 
 Readings delivered through the modern path have `channel: "mlkem"`.
 
-Health checks and metrics (see [observability.md](observability.md)):
+Health checks and metrics:
 
 ```text
 curl http://127.0.0.1:9100/health     # gateway: "status": "ok" when pinned and forwarding

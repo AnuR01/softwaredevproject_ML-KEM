@@ -11,7 +11,7 @@ WHY IT LOOKS LIKE THIS
     inherited. It is the BASELINE we are asked to modernize, not a target
     design. Do not copy this pattern into new code.
 
-    Known weaknesses, all intentional (see README.md and docs/brief.html):
+    Known weaknesses, all intentional (see README.md):
 
     1. The AES key is hardcoded below and shared by every device in the fleet.
        Extract it from one device and you can read all traffic, forever.

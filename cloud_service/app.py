@@ -54,7 +54,7 @@ OBSERVABILITY
     /health    liveness and PQC state, as JSON
     /metrics   counters in the Prometheus text format: readings per channel,
                handshakes and rejected messages by reason, active sessions.
-               See docs/observability.md for what each one is for.
+               Each metric's HELP text says what it measures.
 
 Run:
     python -m uvicorn cloud_service.app:app --host 127.0.0.1 --port 8000

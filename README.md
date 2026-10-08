@@ -127,8 +127,7 @@ Each stored reading has a `channel` field (`mlkem` or `legacy`) showing which
 path delivered it, and `/health` reports the ML-KEM fingerprint and the number
 of active sessions.
 
-Health checks and metrics for operators (all described in
-[`docs/observability.md`](docs/observability.md), including what to alert on):
+Health checks and metrics for operators:
 
 ```bash
 curl http://127.0.0.1:9100/health     # gateway: ok, or degraded with the reason
@@ -257,9 +256,8 @@ python -m pytest -m failure   # only the failure tests (cloud down, timeouts, ..
 
 CI runs the whole suite on every push (`.github/workflows/ci.yml`), plus
 static analysis (`ruff`, including security rules) and a dependency
-vulnerability scan (`pip-audit`). How every finding was handled, and how the
-failure tests were checked with mutation testing, is in
-[`docs/quality-checks.md`](docs/quality-checks.md).
+vulnerability scan (`pip-audit`). The exceptions allowed by the static
+analysis, each with its reason, are listed in `pyproject.toml`.
 
 Tests marked `security` deliberately assert that a weakness is real and
 exploitable, rather than guarding against it. They are the evidence behind the
@@ -394,7 +392,6 @@ New limitations introduced by the migration (to be covered in the report):
 - [x] Deployment to a test environment (ephemeral, in CI; a remote server
       is described in `docs/deployment.md` but not set up)
 - [x] Health checks, metrics, PQC observability, JSON logs
-      (`docs/observability.md`)
 - [x] Final evaluation: strengths, weaknesses, technical debt
-      (`docs/evaluation.md`)
+      (`docs/architecture.md`)
 - [x] Architecture and migration document (`docs/architecture.md`)

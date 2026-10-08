@@ -528,7 +528,7 @@ class DeviceHandler(socketserver.StreamRequestHandler):
             # closing it cleanly. Without this handler the thread died with a
             # ConnectionResetError traceback - noise an on-call operator would
             # have to triage for a routine event. Found by failure testing, not
-            # by reading the code; written up in docs/brief.html.
+            # by reading the code.
             log.info("device %s link reset: %s", peer, exc)
             return
 
